@@ -12,52 +12,24 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.datasets import cifar10
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
 # Load the CIFAR10 data.
 (x_train, y_train), (x_test, y_test) = cifar10.load_data()
-
-
-#%matplotlib inline
-import numpy as np
-import matplotlib.pyplot as plt
-from six.moves import cPickle 
-
-ROWS = 10
-
-x = x_train.astype("uint8")
-
-fig, axes1 = plt.subplots(ROWS,ROWS,figsize=(10,10))
-for j in range(ROWS):
-    for k in range(ROWS):
-        i = np.random.choice(range(len(x)))
-        axes1[j][k].set_axis_off()
-        axes1[j][k].imshow(x[i:i+1][0])
-
 
 
 
 # Training parameters
 BATCH_SIZE = 128  # orig paper trained all networks with batch_size=128
 
-EPOCHS =10  # 200
+EPOCHS =200  # 200
 USE_AUGMENTATION = True
 NUM_CLASSES = np.unique(y_train).shape[0] # 10
 COLORS = x_train.shape[3]
 
 # Subtracting pixel mean improves accuracy
 SUBTRACT_PIXEL_MEAN = True
-
-# Model version
-# Orig paper: version = 1 (ResNet v1), Improved ResNet: version = 2 (ResNet v2)
-VERSION = 1
-
-# Computed depth from supplied model parameter n
-if VERSION == 1:
-    DEPTH = COLORS * 6 + 2
-elif version == 2:
-    DEPTH = COLORS * 9 + 2
-
-    
+DEPTH = COLORS * 6 + 2          #what does depth denotes?   
 
 def lr_schedule(epoch):
     """Learning Rate Schedule
@@ -72,13 +44,13 @@ def lr_schedule(epoch):
         lr (float32): learning rate
     """
     lr = 1e-3
-    if epoch > 9:
+    if epoch > 160:
         lr *= 0.5e-3
-    elif epoch > 8:
+    elif epoch > 140:
         lr *= 1e-3
-    elif epoch > 6:
+    elif epoch > 100:
         lr *= 1e-2
-    elif epoch > 4:
+    elif epoch > 80:
         lr *= 1e-1
     print('Learning rate: ', lr)
     return lr
@@ -134,33 +106,7 @@ def resnet_layer(inputs,
 
 
 def resnet_v1(input_shape, depth, num_classes=10):
-    """ResNet Version 1 Model builder [a]
-
-    Stacks of 2 x (3 x 3) Conv2D-BN-ReLU
-    Last ReLU is after the shortcut connection.
-    At the beginning of each stage, the feature map size is halved (downsampled)
-    by a convolutional layer with strides=2, while the number of filters is
-    doubled. Within each stage, the layers have the same number filters and the
-    same number of filters.
-    Features maps sizes:
-    stage 0: 32x32, 16
-    stage 1: 16x16, 32
-    stage 2:  8x8,  64
-    The Number of parameters is approx the same as Table 6 of [a]:
-    ResNet20 0.27M
-    ResNet32 0.46M
-    ResNet44 0.66M
-    ResNet56 0.85M
-    ResNet110 1.7M
-
-    # Arguments
-        input_shape (tensor): shape of input image tensor
-        depth (int): number of core convolutional layers
-        num_classes (int): number of classes (CIFAR10 has 10)
-
-    # Returns
-        model (Model): Keras model instance
-    """
+    
     if (depth - 2) % 6 != 0:
         raise ValueError('depth should be 6n+2 (eg 20, 32, 44 in [a])')
     # Start model definition.
@@ -207,107 +153,6 @@ def resnet_v1(input_shape, depth, num_classes=10):
     return model
 
 
-
-
-
-def resnet_v2(input_shape, depth, num_classes=10):
-    """ResNet Version 2 Model builder [b]
-
-    Stacks of (1 x 1)-(3 x 3)-(1 x 1) BN-ReLU-Conv2D or also known as
-    bottleneck layer
-    First shortcut connection per layer is 1 x 1 Conv2D.
-    Second and onwards shortcut connection is identity.
-    At the beginning of each stage, the feature map size is halved (downsampled)
-    by a convolutional layer with strides=2, while the number of filter maps is
-    doubled. Within each stage, the layers have the same number filters and the
-    same filter map sizes.
-    Features maps sizes:
-    conv1  : 32x32,  16
-    stage 0: 32x32,  64
-    stage 1: 16x16, 128
-    stage 2:  8x8,  256
-
-    # Arguments
-        input_shape (tensor): shape of input image tensor
-        depth (int): number of core convolutional layers
-        num_classes (int): number of classes (CIFAR10 has 10)
-
-    # Returns
-        model (Model): Keras model instance
-    """
-    if (depth - 2) % 9 != 0:
-        raise ValueError('depth should be 9n+2 (eg 56 or 110 in [b])')
-    # Start model definition.
-    num_filters_in = 16
-    num_res_blocks = int((depth - 2) / 9)
-
-    inputs = Input(shape=input_shape)
-    # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
-    x = resnet_layer(inputs=inputs,
-                     num_filters=num_filters_in,
-                     conv_first=True)
-
-    # Instantiate the stack of residual units
-    for stage in range(3):
-        for res_block in range(num_res_blocks):
-            activation = 'relu'
-            batch_normalization = True
-            strides = 1
-            if stage == 0:
-                num_filters_out = num_filters_in * 4
-                if res_block == 0:  # first layer and first stage
-                    activation = None
-                    batch_normalization = False
-            else:
-                num_filters_out = num_filters_in * 2
-                if res_block == 0:  # first layer but not first stage
-                    strides = 2    # downsample
-
-            # bottleneck residual unit
-            y = resnet_layer(inputs=x,
-                             num_filters=num_filters_in,
-                             kernel_size=1,
-                             strides=strides,
-                             activation=activation,
-                             batch_normalization=batch_normalization,
-                             conv_first=False)
-            y = resnet_layer(inputs=y,
-                             num_filters=num_filters_in,
-                             conv_first=False)
-            y = resnet_layer(inputs=y,
-                             num_filters=num_filters_out,
-                             kernel_size=1,
-                             conv_first=False)
-            if res_block == 0:
-                # linear projection residual shortcut connection to match
-                # changed dims
-                x = resnet_layer(inputs=x,
-                                 num_filters=num_filters_out,
-                                 kernel_size=1,
-                                 strides=strides,
-                                 activation=None,
-                                 batch_normalization=False)
-            x = tensorflow.keras.layers.add([x, y])
-
-        num_filters_in = num_filters_out
-
-    # Add classifier on top.
-    # v2 has BN-ReLU before Pooling
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = AveragePooling2D(pool_size=8)(x)
-    y = Flatten()(x)
-    outputs = Dense(num_classes,
-                    activation='softmax',
-                    kernel_initializer='he_normal')(y)
-
-    # Instantiate model.
-    model = Model(inputs=inputs, outputs=outputs)
-    return model
-
-
-
-
 # Input image dimensions.
 input_shape = x_train.shape[1:]
 
@@ -330,11 +175,8 @@ print('y_train shape:', y_train.shape)
 y_train = tensorflow.keras.utils.to_categorical(y_train, NUM_CLASSES)
 y_test = tensorflow.keras.utils.to_categorical(y_test, NUM_CLASSES)
 
-# Create the neural network
-if VERSION == 2:
-    model = resnet_v2(input_shape=input_shape, depth=DEPTH)
-else:
-    model = resnet_v1(input_shape=input_shape, depth=DEPTH)
+
+model = resnet_v1(input_shape=input_shape, depth=DEPTH)
 
 model.compile(loss='categorical_crossentropy',
               optimizer=Adam(lr=lr_schedule(0)),
@@ -415,7 +257,7 @@ else:
     datagen.fit(x_train)
 
     # Fit the model on the batches generated by datagen.flow().
-    model.fit_generator(datagen.flow(x_train, y_train, batch_size=BATCH_SIZE),
+    result = model.fit_generator(datagen.flow(x_train, y_train, batch_size=BATCH_SIZE),
                         validation_data=(x_test, y_test),
                         epochs=EPOCHS, verbose=0, workers=1,
                         callbacks=callbacks, use_multiprocessing=False)
@@ -430,3 +272,13 @@ scores = model.evaluate(x_test, y_test, verbose=1)
 print('Test loss:', scores[0])
 print('Test accuracy:', scores[1])
 
+
+# summarize history for accuracy
+plt.plot(result.history['accuracy'])
+plt.plot(result.history['val_accuracy'])
+plt.title('model accuracy')
+plt.ylabel('accuracy')
+plt.xlabel('epoch')
+plt.legend(['train', 'val'], loc='upper left')
+#plt.show()
+plt.savefig("/home/skundu/CNN1/accuracy_cifar10_1.png")
